@@ -1,5 +1,69 @@
 local M = {}
 
+------------------------------------------------------------------------------
+-- Format: skip marker
+------------------------------------------------------------------------------
+
+-- Lines containing this marker are left completely untouched.
+local SKIP_MARKER = "-- mermaid-format-ignore"
+
+------------------------------------------------------------------------------
+-- Token padding utilities
+------------------------------------------------------------------------------
+
+--- Mask Mermaid comments (%% to end of line), single-quoted strings,
+--- and double-quoted strings before token padding, then restore.
+local function mask_ignored(line)
+  local masked = { _str = {}, _quote = {}, _comment = {} }
+
+  -- 1) Mask %% comments (from %% to end of line, but NOT %%{ ... }%% directives)
+  local function mask_comment(s)
+    table.insert(masked._comment, s)
+    return "\x03" .. #masked._comment .. "\x03"
+  end
+  -- Directives like %%{init}%% should NOT be treated as comments.
+  -- Strategy: first protect directive patterns, then mask remaining %%
+  local protected = {}
+  local function protect_directive(s)
+    table.insert(protected, s)
+    return "\x04" .. #protected .. "\x04"
+  end
+  -- Temporarily protect directive braces so %% inside %%{...}%% isn't matched
+  masked._str = line:gsub("%%{.-}%%", protect_directive)
+  -- Now mask bare %% comments
+  masked._str = masked._str:gsub("%%%%[^\n]*", mask_comment)
+  -- Restore directives
+  masked._str = masked._str:gsub("\x04(%d+)\x04", function(idx)
+    return protected[tonumber(idx)]
+  end)
+
+  -- 2) Mask single-quoted strings
+  masked._str = masked._str:gsub("'[^']*'", function(s)
+    table.insert(masked._quote, s)
+    return "\x02" .. #masked._quote .. "\x02"
+  end)
+
+  -- 3) Mask double-quoted strings (already handled in original code but re-mask)
+  masked._str = masked._str:gsub('"[^"]*"', function(s)
+    table.insert(masked._quote, s)
+    return "\x02" .. #masked._quote .. "\x02"
+  end)
+
+  -- Unmask function for final restore
+  local function unmask(s)
+    s = s:gsub("\x02(%d+)\x02", function(idx)
+      return masked._quote[tonumber(idx)]
+    end)
+    s = s:gsub("\x03(%d+)\x03", function(idx)
+      return masked._comment[tonumber(idx)]
+    end)
+    return s
+  end
+
+  return masked._str, unmask
+end
+
+--- Pad Mermaid tokens with surrounding spaces
 local function pad_mermaid_tokens(line)
   local tokens = {}
   local function stash(pre, match, post)
@@ -7,207 +71,236 @@ local function pad_mermaid_tokens(line)
     return "\001" .. #tokens .. "\001"
   end
 
-  -- Order matters! Longer/More specific patterns first.
-  -- We capture surrounding spaces to replace them with a single space.
   local patterns = {
     -- ER Diagram Cardinality (e.g. }|..|{ )
     -- Must be before simple arrows to avoid partial matches
-    -- Left: }| |{ }o o{ || |o
-    -- Conn: -- ..
-    -- Right: Same as left reversed
-    "[|{}]?[|o][%.%-][%.%-]+[|o][|{}]?", 
+    "%;{%s*%.%.%s*|}",          -- ;{..|}
+    "[|{}]?[|o][%.%-][%.%-]+[|o][|{}]?",
+
+    -- Flowchart thick chain markers (===, ===>)
+    "%=%=%=",
+    "%=%=%>",
 
     -- Sequence/Flowchart/Class Arrows (Complex)
-    "%<%<%-%-%>%>", -- <<-->>
-    "%<%<%-%>%>",   -- <<->>
-    "%-%-%>%!",     -- -->! (Activations?) - Rare but possible
-    "%-%-%>%>",     -- -->>
-    "%-%.%-%>",     -- -.->
-    "%-%-%>",       -- -->
-    "%-%-%+",       -- --+ (Activation shorthand?)
-    "%-%-%-",       -- ---
-    
-    -- Specific Endings
-    "%-%-x",        -- --x
-    "x%-%-",        -- x--
-    "%-%-%o",       -- --o
-    "o%-%-",        -- o--
-    "%-%-%)",       -- --)
-    "%-%-",         -- -- (Link)
+    "%<%<%-%-%>%>",  -- <<-->>
+    "%<%<%-%>%>",    -- <<->>
+    "%-%-%>%!",      -- -->!
+    "%-%-%>%>",      -- -->>
+    "%-%.%-%>",      -- -.->
 
-    -- Shorter Arrows
-    "%-%>%>",       -- ->>
-    "%-%.%>",       -- -.>
-    "%-%.%-",       -- -.-
-    "%=%=%>",       -- ==>
-    "%=%=",         -- == (Thick link)
-    "%-%>",         -- ->
-    "%-%+",         -- -+
-    "%-x",          -- -x
-    "x%-",          -- x-
-    "%-%)",         -- -)
-    
+    -- GitGraph arrows
+    "%-%-%-%>",      -- --->
+
+    -- Standard arrows
+    "%-%-%>",        -- -->
+    "%-%-%+",        -- --+
+    "%-%-%-",        -- ---
+    "%-%>%>",        -- ->>
+    "%-%.%>",        -- -.>
+    "%-%.%-",        -- -.-
+
     -- Class Diagram Relationships
-    "%<|%-%-",      -- <|-- (Inheritance)
-    "%*%-%-",       -- *-- (Composition)
-    "o%-%-",        -- o-- (Aggregation)
-    "%<|%.%.",      -- <|.. (Realization)
-    "%*%.%.",       -- *..
-    "o%.%.",        -- o..
-    "%-%-|%>",      -- --|>
-    "%-%-%*",       -- --*
-    "%-%-o",        -- --o
-    "%.%.|%>",      -- ..|>
-    "%.%.%*",       -- ..*
-    "%.%.o",        -- ..o
-    
+    "%<|%-%-",       -- <|-- (Inheritance)
+    "%*%-%-",        -- *-- (Composition)
+    "o%-%-",         -- o-- (Aggregation)
+    "%<|%.%.",       -- <|.. (Realization)
+    "%*%.%.",        -- *..
+    "o%.%.",         -- o..
+    "%-%-|%>",       -- --|>
+    "%-%-%*",        -- --*
+    "%-%-o",         -- --o
+    "%.%.|%>",       -- ..|>
+    "%.%.%*",        -- ..*
+    "%.%.o",         -- ..o
+
+    -- Arrow ends
+    "%-%-x",         -- --x
+    "x%-%-",         -- x--
+    "%-%-%o",        -- --o
+    "o%-%-",         -- o--
+    "%-%-%)",        -- --)
+    "%-%-",          -- -- (Link)
+
+    -- Simple arrows
+    "%-%>",          -- ->
+    "%-%+",          -- -+
+    "%-x",           -- -x
+    "x%-",           -- x-
+    "%-%)",          -- -)
+
+    -- Thick links
+    "%=%=%>",        -- ==>
+    "%=%=",          -- == (Thick link)
+
     -- Misc
     ":",            -- Colon (often splits label)
   }
 
+  -- TODO: Use string.find with proper word boundaries for single-char tokens
   for _, pat in ipairs(patterns) do
-    -- Using () to capture groups in gsub. 
-    -- We want to match: (spaces?)(pattern)(spaces?)
-    -- And replace with: \001...
-    -- But we need to be careful not to match inside words if possible.
-    -- Most symbolic tokens are safe.
-    -- We use %f to ensure specific boundaries if needed, but for symbols usually not needed 
-    -- unless they can part of a word. 
-    -- Dash can be in words "state-diagram". 
-    -- So we should be careful with single dashes or words containing dashes.
-    
-    -- Strategy: We iterate and replace.
-    -- However, replacing `-` might be dangerous.
-    -- The patterns above are mostly multi-char or specific.
-    -- Exception: `:`
-    
     line = line:gsub("(%s*)(" .. pat .. ")(%s*)", stash)
   end
 
-  -- Restore with exactly one space around, except for special cases if needed.
-  -- For now, consistent 1-space padding is the goal.
+  -- Restore with exactly one space around each token
   line = line:gsub("\001(%d+)\001", function(idx)
     return " " .. tokens[tonumber(idx)] .. " "
   end)
 
-  -- Cleanup double spaces potentially created
+  -- Cleanup double/triple spaces
   line = line:gsub("%s+", " ")
   return line
 end
+
+------------------------------------------------------------------------------
+-- Block indentation logic
+------------------------------------------------------------------------------
+
+local BLOCK_START_KEYWORDS = {
+  "subgraph", "graph", "flowchart", "sequenceDiagram", "classDiagram",
+  "stateDiagram", "stateDiagram%-v2", "erDiagram", "gantt", "pie", "journey",
+  "requirementDiagram", "gitGraph", "mindmap", "timeline", "xychart%%-beta",
+  "sankey%%-beta", "block", "info",
+  "loop", "rect", "opt", "alt", "par", "critical", "group", "parallel",
+}
+
+local BLOCK_END_KEYWORDS = {
+  "end",
+}
+
+local BLOCK_MID_KEYWORDS = {
+  "else", "elseif",
+}
+
+--- Check if a line begins a block that increases indent
+local function is_start_block(line)
+  -- Structural braces
+  if line:match("{$") or line:match("%%{$") then return true end
+
+  for _, kw in ipairs(BLOCK_START_KEYWORDS) do
+    if line == kw or line:match("^" .. kw .. "%s") or line:match("^" .. kw .. ":") then
+      return true
+    end
+  end
+  return false
+end
+
+--- Check if a line ends a block that decreases indent
+local function is_end_block(line)
+  if line:match("^}") or line:match("}%%$") then return true end
+  for _, kw in ipairs(BLOCK_END_KEYWORDS) do
+    if line == kw or line:match("^" .. kw .. "%s") then return true end
+  end
+  return false
+end
+
+--- Check if a line is a mid-block continuation (else, elseif)
+local function is_mid_block(line)
+  for _, kw in ipairs(BLOCK_MID_KEYWORDS) do
+    if line:match("^" .. kw) then return true end
+  end
+  return false
+end
+
+--- Check if a line is self-closing (opens and closes on same line)
+local function is_self_closing(line)
+  -- Detect lines like: class A { int x }
+  local opens_brace = line:match("{%s")
+  local closes_brace = line:match("%s}")
+  if opens_brace and closes_brace then return true end
+
+  -- Empty braces
+  if line:match("{") and line:match("}") and not line:match("}%%$") then
+    -- Check it's not a multi-line open/close structure
+    local open_count = 0
+    local close_count = 0
+    for c in line:gmatch(".") do
+      if c == "{" then open_count = open_count + 1
+      elseif c == "}" then close_count = close_count + 1 end
+    end
+    -- If balanced braces on one line, treat as self-closing
+    if open_count == close_count and open_count > 0 then
+      return true
+    end
+  end
+
+  return false
+end
+
+--- Count braces in a line for nesting depth tracking
+local function count_toplevel_braces(line, after_block_keyword)
+  -- Only count braces when they represent block structure,
+  -- not when inside a class/state definition
+  if after_block_keyword then
+    -- e.g. "class Animal {" - this is a start, count nothing yet
+    return 0, 0
+  end
+
+  local open_count = 0
+  local close_count = 0
+  -- Simple brace counting - only for structural braces on their own
+  if line:match("{$") or line:match("%%{$") then
+    open_count = 1
+  end
+  if line:match("^}") or line:match("}%%$") then
+    close_count = 1
+  end
+  return open_count, close_count
+end
+
+------------------------------------------------------------------------------
+-- Public API
+------------------------------------------------------------------------------
 
 function M.format()
   local config = require("mermaid").config
   local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
   local formatted_lines = {}
   local indent_level = 0
-  
+
   local shift_width = (config.format and config.format.shift_width) or vim.o.shiftwidth
   local indent_size = shift_width > 0 and shift_width or 4
   local indent_char = vim.o.expandtab and string.rep(" ", indent_size) or "\t"
 
-  -- Regex helpers
-  local function is_start_block(line)
-     -- Structural braces
-     if line:match("{$") or line:match("%%{$") then return true end
-     
-     -- Keywords that open blocks
-     local keywords = {
-        "subgraph", "graph", "flowchart", "sequenceDiagram", "classDiagram", 
-        "stateDiagram", "stateDiagram-v2", "erDiagram", "gantt", "pie", "journey", 
-        "requirementDiagram", "gitGraph", "mindmap", "timeline",
-        "loop", "rect", "opt", "alt", "par", "critical", "group", "parallel"
-     }
-     for _, kw in ipairs(keywords) do
-        -- Check for exact match or match followed by whitespace to avoid partial matches
-        -- We anchor to start of trimmed line
-        if line == kw or line:match("^" .. vim.pesc(kw) .. "%s") or line:match("^" .. vim.pesc(kw) .. ":") then 
-            return true 
-        end
-     end
-     return false
-  end
-
-  local function is_end_block(line)
-     if line:match("^}") or line:match("}%%$") then return true end
-     -- 'end' keyword, alone or with comment
-     if line == "end" or line:match("^end%s") then return true end
-     return false
-  end
-
-  local function is_mid_block(line)
-     -- Keywords that are continuations: else, and, opt (sometimes used inside alt)
-     -- Note: 'opt' is start block usually. 
-     -- 'else', 'and', 'autonumber' (not really a block mid, but a setting)
-     if line:match("^else") or line:match("^and") then return true end
-     return false
-  end
-
-  local function is_self_closing(line)
-      -- Check if line contains both start and end signals
-      -- Simple heuristic: starts with block opener, ends with block closer
-      -- e.g. "class A { int x }" or "%%{init: {}}%%"
-      local starts = is_start_block(line) or line:match("^{") or line:match("^%%{")
-      local ends = is_end_block(line) or line:match("}$") or line:match("}%%$")
-      
-      if starts and ends then return true end
-      
-      -- Empty braces
-      if line:match("{}") then return true end
-      
-      return false
-  end
-
   for _, line in ipairs(lines) do
     local trimmed = line:match("^%s*(.-)%s*$")
-    
+
     if trimmed == "" then
       table.insert(formatted_lines, "")
+    elseif trimmed:match("^" .. vim.pesc(SKIP_MARKER)) or trimmed:match("^" .. vim.pesc(SKIP_MARKER:lower())) then
+      -- Skip marker: keep original line as-is
+      table.insert(formatted_lines, line)
     else
-      -- Pad symbols
-      -- Note: Padding can disrupt some strict formats like `title:` or specific configs.
-      -- But standard Mermaid usually survives spaces. 
-      -- Exception: Strings "..." - we should probably NOT pad inside strings.
-      -- For simplicity, we assume pad_mermaid_tokens logic is greedy enough for tokens 
-      -- but might be naive about strings. 
-      -- Ideally, we'd mask strings first.
-      
-      -- Basic string masking
-      local strings = {}
-      local function mask_string(s)
-          table.insert(strings, s)
-          return "\002" .. #strings .. "\002"
-      end
-      trimmed = trimmed:gsub('"[^"]*"', mask_string)
-      
-      trimmed = pad_mermaid_tokens(trimmed)
-      
-      -- Unmask
-      trimmed = trimmed:gsub("\002(%d+)\002", function(idx)
-          return strings[tonumber(idx)]
-      end)
-      
-      -- Clean up spaces again after potential masking/unmasking weirdness
-      trimmed = trimmed:match("^%s*(.-)%s*$")
+      -- Step 1: Mask comments and strings
+      local masked_line, unmask = mask_ignored(trimmed)
+
+      -- Step 2: Pad tokens on the masked version
+      masked_line = pad_mermaid_tokens(masked_line)
+
+      -- Step 3: Restore original strings and comments
+      masked_line = unmask(masked_line)
+
+      -- Step 4: Trim again after padding/unmasking
+      masked_line = masked_line:match("^%s*(.-)%s*$")
 
       local current_adjust = 0
-      
-      if is_self_closing(trimmed) then
-          -- No indent change logic
+
+      if is_self_closing(masked_line) then
+        -- No indent change for self-closing lines
       else
-          if is_end_block(trimmed) then
-              indent_level = math.max(0, indent_level - 1)
-          elseif is_mid_block(trimmed) then
-              current_adjust = -1
-          end
+        if is_end_block(masked_line) then
+          indent_level = math.max(0, indent_level - 1)
+        elseif is_mid_block(masked_line) then
+          current_adjust = -1
+        end
       end
-      
-      -- Apply and print
+
+      -- Apply indent
       local print_level = math.max(0, indent_level + current_adjust)
-      table.insert(formatted_lines, string.rep(indent_char, print_level) .. trimmed)
-      
-      -- Indent for next line
-      if is_start_block(trimmed) and not is_self_closing(trimmed) then
-          indent_level = indent_level + 1
+      table.insert(formatted_lines, string.rep(indent_char, print_level) .. masked_line)
+
+      -- Adjust for next line
+      if is_start_block(masked_line) and not is_self_closing(masked_line) then
+        indent_level = indent_level + 1
       end
     end
   end
