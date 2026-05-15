@@ -48,7 +48,7 @@ describe("mermaid lint", function()
     it("handles 'Could not parse diagram' format", function()
       local stderr = "Could not parse diagram: error at line 15, unexpected symbol"
       local clean = stderr:gsub("\x1b%[%d+;?%d*m", "")
-      local line_num = clean:match("[Cc]ould not parse.->.-error at line (%d+)")
+      local line_num = clean:match("[Cc]ould not parse.-error at line (%d+)")
       assert.are.equal("15", line_num)
     end)
 

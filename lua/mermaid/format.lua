@@ -85,15 +85,20 @@ local function pad_mermaid_tokens(line)
     -- GitGraph arrows
     "%-%-%-%>",      -- --->
 
-    -- Standard arrows
+    -- Standard arrows (longer patterns first to avoid greedy matches)
     "%-%-%>",        -- -->
     "%-%-%+",        -- --+
     "%-%-%-",        -- ---
-    "%-%>%>",        -- ->>
-    "%-%.%>",        -- -.>
-    "%-%.%-",        -- -.-
 
-    -- Class Diagram Relationships
+    -- Arrow ends
+    "%-%-x",         -- --x
+    "x%-%-",         -- x--
+    "%-%-%o",        -- --o
+    "o%-%-",         -- o--
+    "%-%-%)",        -- --)
+    "%-%-",          -- -- (Link)
+
+    -- Class Diagram Relationships (multi-char, no bare x-/o- to avoid word matches)
     "%<|%-%-",       -- <|-- (Inheritance)
     "%*%-%-",        -- *-- (Composition)
     "o%-%-",         -- o-- (Aggregation)
@@ -107,20 +112,14 @@ local function pad_mermaid_tokens(line)
     "%.%.%*",        -- ..*
     "%.%.o",         -- ..o
 
-    -- Arrow ends
-    "%-%-x",         -- --x
-    "x%-%-",         -- x--
-    "%-%-%o",        -- --o
-    "o%-%-",         -- o--
-    "%-%-%)",        -- --)
-    "%-%-",          -- -- (Link)
+    -- Multi-char thin arrows (must be before single-char)
+    "%-%>%>",        -- ->>
+    "%-%.%>",        -- -.>
+    "%-%.%-",        -- -.-
 
-    -- Simple arrows
+    -- Thin arrows (single dash - after multi-char to avoid greed)
     "%-%>",          -- ->
-    "%-%+",          -- -+
     "%-x",           -- -x
-    "x%-",           -- x-
-    "%-%)",          -- -)
 
     -- Thick links
     "%=%=%>",        -- ==>
