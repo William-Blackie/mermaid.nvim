@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - **Server refactoring**: Modular route handlers (`handle_sse`, `handle_root`, `handle_static`)
 - **Server security**: Request timeout (10s), TCP keepalive, directory traversal protection
 - **MIME type map**: Proper `Content-Type` for css/js/svg/png files
-- **CI/CD**: GitHub Actions workflow (lint + test matrix v0.8–nightly + auto-release)
+- **CI/CD**: GitHub Actions workflow (lint + test matrix v0.9–nightly + auto-release)
 - **Issue templates**: Bug report + feature request markdown templates
 - **`.luacheckrc`**: Lua lint configuration for CI
 - **`Makefile`**: `make test` convenience target
