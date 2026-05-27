@@ -53,7 +53,8 @@ jobs:
 
       - name: Bump version and push tag
         run: |
-          LATEST=$(git tag --sort=-v:refname | grep '^v' | head -1 || echo "v0.0.0")
+          LATEST=$(git tag --sort=-v:refname | grep '^v' | head -1)
+          LATEST=${LATEST:-v0.0.0}
           # Extract major.minor.patch and bump patch
           RAW=$(echo "$LATEST" | sed 's/^v//')
           MAJOR=$(echo "$RAW" | cut -d. -f1)
