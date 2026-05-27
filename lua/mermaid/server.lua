@@ -168,6 +168,7 @@ M.current_content = "graph TD\nA[Loading...]"
 M.clients = {}
 M.monitor_timer = nil
 M.theme_mode = "light"  -- "light" or "dark"
+M._test_mode = false     -- Set true in tests to skip idle monitor
 
 --- Broadcast updated content to all connected SSE clients
 function M.broadcast(content)
@@ -265,7 +266,7 @@ end
 
 --- Start the idle monitor (auto-close server after 20s with no clients)
 function M.start_monitoring()
-  if M.monitor_timer then return end
+  if M.monitor_timer or M._test_mode then return end
 
   local idle_since = nil
   M.monitor_timer = uv.new_timer()
